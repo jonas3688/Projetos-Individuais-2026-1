@@ -1,6 +1,0 @@
-mlflow
-transformers
-datasets
-torch
-torchvision
-pillow

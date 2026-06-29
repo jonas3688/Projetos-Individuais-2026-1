@@ -1,6 +1,0 @@
-.venv/
-data/raw/
-
-# MLflow 
-mlruns/**/*.safetensors
-mlruns/**/*.bin

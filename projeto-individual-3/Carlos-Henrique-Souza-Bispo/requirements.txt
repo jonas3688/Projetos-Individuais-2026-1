@@ -1,2 +1,0 @@
-# Sem dependencias externas obrigatorias para executar os testes locais.
-

@@ -1,3 +1,0 @@
-             pred_neg  pred_pos
-true_neg          234        19
-true_pos           27       220
