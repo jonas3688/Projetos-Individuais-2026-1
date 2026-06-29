@@ -1,29 +1,46 @@
+"""
+HabitaData UDA API — Camada de Serviço REST.
+
+Endpoints:
+  GET  /                       → Health check
+  GET  /api/conjuntura         → Consulta dados com filtros
+  GET  /api/catalog            → Catálogo de documentos processados
+  POST /api/ingest/file        → Upload de PDF para processamento
+  POST /api/ingest/url         → Processamento de PDF por URL remota
+  POST /api/ingest/crawl       → Disparo do crawler de RI
+"""
+
 import os
 import shutil
 import tempfile
-from typing import Optional, List
+from typing import Optional
+
 import requests
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 
 import database
 import pipeline
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Inicializa as tabelas do SQLite na inicialização do servidor
+    """Inicializa o banco de dados ao iniciar o servidor."""
     database.init_db()
     yield
 
+
 app = FastAPI(
     title="HabitaData UDA API",
-    description="Pipeline de Ingestão e Análise de Dados Não Estruturados (UDA) para Relatórios de Conjuntura Habitacional",
+    description=(
+        "Pipeline de Ingestão e Análise de Dados Não Estruturados (UDA) "
+        "para Relatórios de Conjuntura do Setor Habitacional."
+    ),
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-# Habilita CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,138 +49,134 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def home():
+
+# ---- Endpoints ------------------------------------------------------------
+
+
+@app.get("/", tags=["Health"])
+def health_check():
+    """Retorna status do servidor e lista de endpoints disponíveis."""
     return {
-        "message": "Bem-vindo à API HabitaData UDA!",
         "status": "online",
+        "service": "HabitaData UDA API",
+        "version": "1.0.0",
         "endpoints": {
-            "GET /api/conjuntura": "Consulta de dados de lançamentos e vendas estruturados",
-            "GET /api/catalog": "Histórico de linhagem e catálogo de arquivos processados",
-            "POST /api/ingest/file": "Envio manual de arquivo PDF para extração",
-            "POST /api/ingest/url": "Solicitação de download e processamento de PDF por URL",
-            "POST /api/ingest/crawl": "Disparo manual do crawler para monitoramento de sites de RI"
-        }
+            "GET /api/conjuntura": "Dados estruturados com filtros por empresa/ano/trimestre",
+            "GET /api/catalog": "Catálogo de documentos processados e linhagem",
+            "POST /api/ingest/file": "Upload de PDF para extração",
+            "POST /api/ingest/url": "Ingestão de PDF via URL remota",
+            "POST /api/ingest/crawl": "Crawler de Centrais de RI",
+        },
     }
 
-@app.get("/api/conjuntura")
+
+@app.get("/api/conjuntura", tags=["Consulta"])
 def consultar_conjuntura(
-    empresa: Optional[str] = Query(None, description="Filtrar por nome da incorporadora (ex: MRV, Cury)"),
-    ano: Optional[int] = Query(None, description="Filtrar por ano (ex: 2025)"),
-    trimestre: Optional[int] = Query(None, description="Filtrar por trimestre (1, 2, 3 ou 4)")
+    empresa: Optional[str] = Query(None, description="Nome da incorporadora (ex: MRV)"),
+    ano: Optional[int] = Query(None, description="Ano (ex: 2025)"),
+    trimestre: Optional[int] = Query(None, ge=1, le=4, description="Trimestre (1-4)"),
 ):
-    try:
-        dados = database.buscar_dados_conjuntura(empresa, ano, trimestre)
-        return {
-            "count": len(dados),
-            "filtros": {"empresa": empresa, "ano": ano, "trimestre": trimestre},
-            "dados": dados
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao buscar dados: {str(e)}")
+    """Retorna dados de lançamentos e vendas com filtros opcionais."""
+    dados = database.buscar_dados_conjuntura(empresa, ano, trimestre)
+    return {
+        "count": len(dados),
+        "filtros": {"empresa": empresa, "ano": ano, "trimestre": trimestre},
+        "dados": dados,
+    }
 
-@app.get("/api/catalog")
-def obter_catalogo_linhagem():
-    try:
-        docs = database.obter_catalogo()
-        return {
-            "count": len(docs),
-            "documentos": docs
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao buscar catálogo: {str(e)}")
 
-@app.post("/api/ingest/file")
-async def ingerir_arquivo_upload(file: UploadFile = File(...)):
-    """Faz o upload direto de um arquivo PDF e o processa no pipeline."""
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos.")
-        
-    # Salva temporariamente para processamento
+@app.get("/api/catalog", tags=["Catálogo"])
+def obter_catalogo():
+    """Retorna o catálogo de todos os documentos processados com linhagem."""
+    docs = database.obter_catalogo()
+    return {"count": len(docs), "documentos": docs}
+
+
+@app.post("/api/ingest/file", tags=["Ingestão"])
+async def ingerir_arquivo(file: UploadFile = File(...)):
+    """Upload manual de PDF para extração pelo pipeline."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Apenas arquivos .pdf são aceitos.")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
-        
+
     try:
-        sucesso, msg = pipeline.processar_relatorio(tmp_path, url_origem="Upload Manual")
-        if not sucesso:
-            # Já existia
-            return {"status": "ignorado", "detail": msg}
-        return {"status": "processado", "detail": msg}
+        ok, msg = pipeline.processar_relatorio(tmp_path, url_origem="upload_manual")
+        status = "processado" if ok else "ignorado"
+        return {"status": status, "detail": msg}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro no pipeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro no pipeline: {e}")
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-@app.post("/api/ingest/url")
-def ingerir_por_url(url: str = Query(..., description="URL direta do arquivo PDF do relatório")):
-    """Baixa um PDF a partir de uma URL e faz a ingestão."""
+
+@app.post("/api/ingest/url", tags=["Ingestão"])
+def ingerir_por_url(url: str = Query(..., description="URL direta do PDF")):
+    """Baixa um PDF remoto e processa no pipeline."""
     if not url.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="A URL fornecida deve apontar para um arquivo .pdf")
-        
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
-    }
-    
-    # Salva temporariamente para processamento
+        raise HTTPException(status_code=400, detail="A URL deve apontar para um .pdf")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp_path = tmp.name
-        
+
     try:
-        r = requests.get(url, headers=headers, stream=True, timeout=15)
+        r = requests.get(url, headers=pipeline.HEADERS, stream=True, timeout=30)
         if r.status_code != 200:
-            raise HTTPException(status_code=400, detail=f"Erro ao baixar o arquivo: HTTP {r.status_code}")
-            
+            raise HTTPException(
+                status_code=400,
+                detail=f"Falha ao baixar: HTTP {r.status_code}",
+            )
+
         with open(tmp_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
-                
-        sucesso, msg = pipeline.processar_relatorio(tmp_path, url_origem=url)
-        if not sucesso:
-            return {"status": "ignorado", "detail": msg}
-        return {"status": "processado", "detail": msg}
-        
+
+        ok, msg = pipeline.processar_relatorio(tmp_path, url_origem=url)
+        status = "processado" if ok else "ignorado"
+        return {"status": status, "detail": msg}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro no pipeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro no pipeline: {e}")
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-def tarefa_background_crawl():
-    """Tarefa executada em segundo plano para raspagem e processamento automático."""
-    urls_pdf = pipeline.monitorar_fontes_ri()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
-    }
-    
-    for url in urls_pdf:
-        # Cria caminho temporário
+
+def _executar_crawl():
+    """Tarefa de background: varre RI, baixa e processa novos PDFs."""
+    resultados = pipeline.monitorar_fontes_ri()
+    for item in resultados:
+        url = item["url"]
+        empresa = item["empresa"]
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp_path = tmp.name
-            
+
         try:
-            r = requests.get(url, headers=headers, stream=True, timeout=15)
+            r = requests.get(url, headers=pipeline.HEADERS, stream=True, timeout=30)
             if r.status_code == 200:
                 with open(tmp_path, "wb") as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
-                # Tenta processar
-                pipeline.processar_relatorio(tmp_path, url_origem=url)
+                pipeline.processar_relatorio(
+                    tmp_path, url_origem=url, empresa_fonte=empresa,
+                )
         except Exception as e:
-            print(f"[Crawler Background] Falha ao processar URL {url}: {e}")
+            pipeline.logger.warning("Crawler falhou para %s: %s", url, e)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-@app.post("/api/ingest/crawl")
-def disparar_crawler_ri(background_tasks: BackgroundTasks):
-    """
-    Dispara o crawler em segundo plano para varrer os portais de RI da MRV, Cury e Direcional.
-    Qualquer PDF novo encontrado será baixado, hash gerado e processado pelo pipeline de LLM.
-    """
-    background_tasks.add_task(tarefa_background_crawl)
+
+@app.post("/api/ingest/crawl", tags=["Ingestão"])
+def disparar_crawler(background_tasks: BackgroundTasks):
+    """Dispara o crawler de Centrais de RI em segundo plano."""
+    background_tasks.add_task(_executar_crawl)
     return {
         "status": "iniciado",
-        "detail": "Crawler de Centrais de Resultados de RI iniciado em segundo plano."
+        "detail": "Crawler de Centrais de Resultados iniciado em background.",
     }

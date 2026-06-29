@@ -1,54 +1,96 @@
-from pydantic import BaseModel, Field
+"""
+Contrato Semântico de Dados — Pipeline UDA Habitacional.
+
+Define os modelos Pydantic que blindam a saída do LLM, forçando
+tipos corretos e tratando ausências como NULL.
+"""
+
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
+from enum import Enum
+
+
+class EmpresaEnum(str, Enum):
+    """Empresas-alvo do pipeline, padronizadas."""
+    MRV = "MRV"
+    CURY = "CURY"
+    TENDA = "TENDA"
+    DIRECIONAL = "DIRECIONAL"
+    PLANO_E_PLANO = "PLANO & PLANO"
+    PACAEMBU = "PACAEMBU"
+
+
+EMPRESAS_VALIDAS = {e.value for e in EmpresaEnum}
+
 
 class DadosEmpresaTrimestre(BaseModel):
     """
-    Representa os dados estruturados de lançamentos e vendas de uma construtora em um trimestre específico.
-    Todos os valores financeiros de VGV (Valor Geral de Vendas) devem ser informados em valores brutos absolutos (em milhões de reais).
+    Dados operacionais de uma construtora em um trimestre.
+
+    Todos os valores financeiros de VGV (Valor Geral de Vendas)
+    devem ser informados em valores brutos absolutos (R$ Milhões).
+    Porcentagens de variação devem ser IGNORADAS.
     """
     empresa: str = Field(
-        ..., 
-        description="Nome da empresa/incorporadora em caixa alta unificada (ex: MRV, CURY, TENDA, DIRECIONAL, PLANO & PLANO, PACAEMBU)"
+        ...,
+        description="Nome padronizado da incorporadora (MRV, CURY, TENDA, DIRECIONAL, PLANO & PLANO, PACAEMBU)"
     )
     ano: int = Field(
-        ..., 
-        description="Ano do relatório (ex: 2025, 2026)"
+        ...,
+        ge=2000,
+        le=2100,
+        description="Ano do relatório (ex: 2025)"
     )
     trimestre: int = Field(
-        ..., 
-        description="Trimestre do relatório comercial (1, 2, 3 ou 4)"
+        ...,
+        ge=1,
+        le=4,
+        description="Trimestre (1, 2, 3 ou 4)"
     )
     lancamentos_vgv: Optional[float] = Field(
-        None, 
-        description="Valor absoluto de Lançamentos em VGV (Valor Geral de Vendas) em milhões de reais (ex: 450.5). Tratar como null se não informado."
+        None,
+        ge=0,
+        description="Lançamentos em VGV (R$ Milhões). NULL se ausente no documento."
     )
     lancamentos_unidades: Optional[int] = Field(
-        None, 
-        description="Quantidade absoluta de unidades de imóveis lançadas. Tratar como null se não informado."
+        None,
+        ge=0,
+        description="Unidades lançadas. NULL se ausente no documento."
     )
     vendas_liquidas_vgv: Optional[float] = Field(
-        None, 
-        description="Valor absoluto de Vendas Líquidas (ou vendas brutas se a líquida não estiver disponível) em VGV em milhões de reais. Tratar como null se não informado."
+        None,
+        ge=0,
+        description="Vendas Líquidas em VGV (R$ Milhões). NULL se ausente no documento."
     )
     vendas_unidades: Optional[int] = Field(
-        None, 
-        description="Quantidade absoluta de unidades vendidas. Tratar como null se não informado."
+        None,
+        ge=0,
+        description="Unidades vendidas. NULL se ausente no documento."
     )
     unidade_medida: str = Field(
-        "R$ Milhões", 
-        description="Unidade de medida padrão dos valores financeiros (geralmente 'R$ Milhões')"
+        "R$ Milhões",
+        description="Unidade padrão dos valores financeiros."
     )
     linhagem_trecho: str = Field(
-        ..., 
-        description="Trecho exato do texto do PDF do qual estes números foram extraídos, comprovando a linhagem do dado e evitando alucinações."
+        ...,
+        min_length=5,
+        description="Trecho exato do PDF que justifica a extração (data lineage)."
     )
+
+    @field_validator("empresa")
+    @classmethod
+    def normalizar_empresa(cls, v: str) -> str:
+        """Normaliza o nome da empresa para caixa alta."""
+        return v.strip().upper()
+
 
 class ExtrairRelatorioPDF(BaseModel):
     """
-    Contrato semântico para a resposta do LLM ao ler o relatório completo.
-    Pode conter dados de uma ou mais empresas/incorporadoras mencionadas no relatório.
+    Contrato semântico para a resposta completa do LLM.
+    Pode conter registros de múltiplas empresas.
     """
     registros: List[DadosEmpresaTrimestre] = Field(
-        ..., 
-        description="Lista de registros trimestrais de incorporadoras identificados no documento."
+        ...,
+        min_length=1,
+        description="Lista de registros trimestrais extraídos do documento."
     )
