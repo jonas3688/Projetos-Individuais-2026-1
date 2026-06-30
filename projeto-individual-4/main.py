@@ -139,6 +139,8 @@ def ingerir_por_url(url: str = Query(..., description="URL direta do PDF")):
         return {"status": status, "detail": msg}
     except HTTPException:
         raise
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=400, detail=f"Falha ao baixar: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no pipeline: {e}")
     finally:

@@ -119,6 +119,27 @@ class TestContratoSemantico:
         )
         assert reg.empresa == "MRV"
 
+    def test_empresa_nao_cadastrada_rejeitada(self):
+        """Empresas fora do catálogo devem ser barradas."""
+        with pytest.raises(Exception) as excinfo:
+            schema.DadosEmpresaTrimestre(
+                empresa="FACEBOOK CONSTRUTORA",
+                ano=2025,
+                trimestre=3,
+                linhagem_trecho="Trecho alucinado pelo LLM",
+            )
+        assert "não é uma incorporadora habitacional válida" in str(excinfo.value)
+
+    def test_mapeamento_nomes_empresas(self):
+        """O validador deve converter grafias conhecidas para o padrao."""
+        reg = schema.DadosEmpresaTrimestre(
+            empresa="Plano e Plano",
+            ano=2025,
+            trimestre=3,
+            linhagem_trecho="Trecho válido"
+        )
+        assert reg.empresa == "PLANO & PLANO"
+
     def test_trimestre_invalido_rejeitado(self):
         """Trimestre fora de 1-4 deve ser rejeitado."""
         with pytest.raises(Exception):
@@ -278,6 +299,20 @@ class TestDatabase:
                 "linhagem_trecho": "Deveria falhar.",
             })
 
+    def test_cascade_delete_documentos(self, db_temporario):
+        """Ao deletar documento, a conjuntura associada deve sumir (CASCADE)."""
+        doc_id = database.registrar_documento("cascade.pdf", "hash_c")
+        database.salvar_dados_conjuntura(doc_id, {
+            "empresa": "CURY", "ano": 2025, "trimestre": 3,
+            "lancamentos_vgv": 100, "lancamentos_unidades": 100,
+            "vendas_liquidas_vgv": 100, "vendas_unidades": 100,
+            "linhagem_trecho": "Trecho cascade."
+        })
+        assert len(database.buscar_dados_conjuntura(empresa="CURY")) == 1
+        
+        database.deletar_documento(doc_id)
+        assert len(database.buscar_dados_conjuntura(empresa="CURY")) == 0
+
 
 # ============================================================================
 # 3. TESTES DO PIPELINE (pipeline.py)
@@ -387,6 +422,19 @@ class TestPipeline:
         dados = database.buscar_dados_conjuntura()
         assert len(dados) >= 1
 
+    def test_pdf_escaneado_lanca_excecao(self, tmp_path):
+        """PDF sem texto (só imagem) deve lançar ValueError de PDF vazio."""
+        import fitz
+        f = str(tmp_path / "vazio.pdf")
+        doc = fitz.open()
+        doc.new_page()  # Página totalmente vazia, simulando imagem sem OCR
+        doc.save(f)
+        doc.close()
+        
+        with pytest.raises(ValueError) as excinfo:
+            pipeline.processar_relatorio(f)
+        assert "vazio ou não legível textualmente" in str(excinfo.value)
+
 
 # ============================================================================
 # 4. TESTES DA API (main.py)
@@ -485,6 +533,22 @@ class TestAPI:
             files={"file": ("texto.txt", b"conteudo", "text/plain")},
         )
         assert r.status_code == 400
+
+    def test_upload_arquivo_corrompido(self, client, tmp_path):
+        """Upload de PDF inválido (corrompido) deve retornar 500 no processamento do PyMuPDF."""
+        f_path = tmp_path / "corrompido.pdf"
+        f_path.write_bytes(b"Isto nao e um PDF valido, apenas lixo bytes")
+        
+        with open(f_path, "rb") as f:
+            r = client.post("/api/ingest/file", files={"file": ("corrompido.pdf", f, "application/pdf")})
+        assert r.status_code == 500
+        assert "Erro no pipeline" in r.json()["detail"]
+
+    def test_url_remota_quebrada(self, client):
+        """Download por URL 404/500 deve ser barrado com 400 antes do pipeline."""
+        r = client.post("/api/ingest/url?url=https://httpstat.us/404/relatorio.pdf")
+        assert r.status_code == 400
+        assert "Falha ao baixar" in r.json()["detail"]
 
     def test_conjuntura_filtro_empresa(self, client, pdf_exemplo):
         """Filtro por empresa deve funcionar após ingestão."""

@@ -80,8 +80,26 @@ class DadosEmpresaTrimestre(BaseModel):
     @field_validator("empresa")
     @classmethod
     def normalizar_empresa(cls, v: str) -> str:
-        """Normaliza o nome da empresa para caixa alta."""
-        return v.strip().upper()
+        """Normaliza e valida o nome da empresa contra o catálogo padronizado."""
+        v_upper = v.strip().upper()
+        # Normalizações comuns
+        if v_upper in ("PLANO E PLANO", "PLANO & PLANO", "PLANO&PLANO", "PLANO"):
+            return "PLANO & PLANO"
+        if "MRV" in v_upper:
+            return "MRV"
+        if "CURY" in v_upper:
+            return "CURY"
+        if "TENDA" in v_upper:
+            return "TENDA"
+        if "DIRECIONAL" in v_upper:
+            return "DIRECIONAL"
+        if "PACAEMBU" in v_upper:
+            return "PACAEMBU"
+        
+        # Se não bater com nenhuma das conhecidas, levanta ValueError
+        if v_upper not in EMPRESAS_VALIDAS:
+            raise ValueError(f"Empresa '{v}' não é uma incorporadora habitacional válida no escopo do pipeline.")
+        return v_upper
 
 
 class ExtrairRelatorioPDF(BaseModel):

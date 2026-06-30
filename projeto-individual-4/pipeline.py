@@ -108,7 +108,9 @@ def extrair_texto_pdf(caminho: str) -> str:
     paginas = []
     with fitz.open(caminho) as doc:
         for i, page in enumerate(doc):
-            paginas.append(f"=== PÁGINA {i + 1} ===\n{page.get_text()}")
+            texto_pagina = page.get_text().strip()
+            if texto_pagina:
+                paginas.append(f"=== PÁGINA {i + 1} ===\n{texto_pagina}")
     return "\n\n".join(paginas)
 
 
