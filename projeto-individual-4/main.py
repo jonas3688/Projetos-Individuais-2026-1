@@ -54,7 +54,7 @@ app.add_middleware(
 
 
 @app.get("/", tags=["Health"])
-def health_check():
+async def health_check():
     """Retorna status do servidor e lista de endpoints disponíveis."""
     return {
         "status": "online",
@@ -71,7 +71,7 @@ def health_check():
 
 
 @app.get("/api/conjuntura", tags=["Consulta"])
-def consultar_conjuntura(
+async def consultar_conjuntura(
     empresa: Optional[str] = Query(None, description="Nome da incorporadora (ex: MRV)"),
     ano: Optional[int] = Query(None, description="Ano (ex: 2025)"),
     trimestre: Optional[int] = Query(None, ge=1, le=4, description="Trimestre (1-4)"),
@@ -86,7 +86,7 @@ def consultar_conjuntura(
 
 
 @app.get("/api/catalog", tags=["Catálogo"])
-def obter_catalogo():
+async def obter_catalogo():
     """Retorna o catálogo de todos os documentos processados com linhagem."""
     docs = database.obter_catalogo()
     return {"count": len(docs), "documentos": docs}
@@ -114,7 +114,7 @@ async def ingerir_arquivo(file: UploadFile = File(...)):
 
 
 @app.post("/api/ingest/url", tags=["Ingestão"])
-def ingerir_por_url(url: str = Query(..., description="URL direta do PDF")):
+async def ingerir_por_url(url: str = Query(..., description="URL direta do PDF")):
     """Baixa um PDF remoto e processa no pipeline."""
     if not url.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="A URL deve apontar para um .pdf")
@@ -175,7 +175,7 @@ def _executar_crawl():
 
 
 @app.post("/api/ingest/crawl", tags=["Ingestão"])
-def disparar_crawler(background_tasks: BackgroundTasks):
+async def disparar_crawler(background_tasks: BackgroundTasks):
     """Dispara o crawler de Centrais de RI em segundo plano."""
     background_tasks.add_task(_executar_crawl)
     return {

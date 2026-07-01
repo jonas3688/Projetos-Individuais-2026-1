@@ -1,0 +1,7 @@
+plano_*.md
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+dados_habitacionais.db
